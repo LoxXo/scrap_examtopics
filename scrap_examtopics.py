@@ -1,10 +1,11 @@
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
+from collections import OrderedDict
 import csv
 import os
 import json
-
+import json2table
 
 class Question:
     def __init__(self) -> None:
@@ -18,13 +19,13 @@ class Question:
 
 def create_driver():
     options = Options()
-    # options.add_argument('--headless')
+    options.add_argument('--headless')
     driver = webdriver.Firefox(options=options)
     return driver
 
 def create_dir(folder:str) -> None:
     try:
-        os.mkdir(f'./{folder}')
+        os.makedirs(f'./{folder}')
     except:
         print(f'./{folder}/ already exists, skipping creating a directory')
     return None
@@ -106,9 +107,6 @@ def scrap_page(driver, page: str, add_comments: bool) -> Question:
             imageobject = driver.find_element(By.CLASS_NAME, 'in-exam-image')
         except:
             imageobject = None
-        # if imagelink:
-        #     qname = f't_{numbers_title[0]}_q_{numbers_title[1]}'
-        #     download_photo(imagelink, qname)
         answers = driver.find_elements(By.CLASS_NAME, 'multi-choice-item')
         comments = driver.find_elements(By.CLASS_NAME, 'discussion-container')
         full_content.topic_nr = numbers_title[0]
@@ -133,7 +131,7 @@ def scrap_page(driver, page: str, add_comments: bool) -> Question:
 def dump_to_file(content: Question, filename: str, folder: str) -> None:
     if content.image:
         content.image.screenshot(f'./{folder}/t_{content.topic_nr}_q_{content.number}.png')
-    with open(f'{folder}/{filename}', 'a') as file:
+    with open(f'{folder}/{filename}.txt', 'a') as file:
         file.write("Topic: " + str(content.topic_nr) + " question: " + str(content.number) + ". ")
         file.write(content.question + '\n')
         for answer in content.answers:
@@ -148,28 +146,65 @@ def create_stock_html(filename: str, folder: str):
     with open(f'{folder}/{filename}.html', 'a') as file:
         file.write(f"<html><head></head><body><p></p></body></html>")
 
-# def dump_to_json(content: Question, filename: str, folder: str) -> None:
-#     with open(f'{folder}/{filename}.json', 'a') as file:
-#         file.write(json.dumps(content.__dict__))
+def create_json(filename: str, folder: str) -> None:
+    with open(f'{folder}/{filename}.json', 'w') as file:
+        json.dump('questions', file)
+
+def add_to_dict(all_questions: OrderedDict, content: Question) -> OrderedDict:
+    index = f't_{content.topic_nr}_q_{content.number}'
+    if content.image:
+        #content.image = content.image.screenshot_as_base64
+        content.image = f't_{content.topic_nr}_q_{content.number}.png'
+        order = ['topic_nr', 'number', 'question', 'image', 'answers', 'comments']
+    else:
+        order = ['topic_nr', 'number', 'question', 'answers', 'comments']
+    all_questions[index]=OrderedDict(content.__dict__)
+    for key in order:
+        all_questions[index].move_to_end(key)
+    return all_questions
+
+def clear_dict_of_numbers(all_questions: OrderedDict) -> OrderedDict:
+    for key in all_questions:
+        del all_questions[key]['number']
+        del all_questions[key]['topic_nr']
+    return all_questions
+
+def dump_to_json(all_questions: OrderedDict, filename: str, folder: str) -> None:
+    all_questions = clear_dict_of_numbers(all_questions)
+    with open(f'{folder}/{filename}.json', 'w') as file:
+        json.dump(all_questions, file)
+
+def json_to_html(json_file: str, folder: str):
+    table_attributes = {"style" : "width:100%", "class" : "table table-striped", 'border' : 1}
+    with open(f'{folder}/{json_file}.json') as file:
+        json_object = json.load(file)
+    html = json2table.convert(json_object, table_attributes=table_attributes)
+    with open(f'{folder}/{json_file}.html', 'w') as file:
+        file.write(html)
+    return html
 
 def main():
+    # move these settings to class
     csvfilename: str = 'splunklinks.csv'
     link_to_scrap: str = 'https://www.examtopics.com/discussions/splunk/'
     search_phrase = 'splk-1002'
-    folder = 'resaults/' + search_phrase
+    folder = 'results/' + search_phrase
+    all_questions = OrderedDict()
 
     create_dir(folder)
     check_for_file(folder, search_phrase)
     driver = create_driver()
     if check_csv_content(csvfilename) == False:
-        #disc_links = scrap_discussions(driver, link_to_scrap)
         disc_links = scrap_discussions(driver, link_to_scrap)
         write_csv(csvfilename, disc_links)
     topics = get_csv(csvfilename)
     sorted_topics = search_for_text(topics, search_phrase)
     for topic in sorted_topics:
         content: Question = scrap_page(driver, topic, True)
-        dump_to_file(content, f'{search_phrase}.txt', folder)
+        dump_to_file(content, search_phrase, folder)
+        add_to_dict(all_questions, content)
+    dump_to_json(all_questions, search_phrase, folder)
+    json_to_html(search_phrase, folder)
 
     driver.close()
 
